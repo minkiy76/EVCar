@@ -105,6 +105,26 @@ public class LiveBroker implements Broker {
         }
     }
 
+    /**
+     * 계좌에서 이미 보유 중인 코인을 찾는다 (재시작 시 포지션 복구용).
+     * 평가금액(평균 매수가 기준) 5,000원 이상인 첫 KRW 마켓 코인을 반환.
+     */
+    public java.util.Optional<String> findHeldMarket() {
+        List<AccountDto> accounts = exchangeClient.getAccounts();
+        if (accounts == null) {
+            return java.util.Optional.empty();
+        }
+        return accounts.stream()
+                .filter(a -> !"KRW".equals(a.currency()) && "KRW".equals(a.unitCurrency()))
+                .filter(a -> {
+                    double balance = Double.parseDouble(a.balance());
+                    double avgBuy = Double.parseDouble(a.avgBuyPrice());
+                    return balance * avgBuy >= 5_000;
+                })
+                .map(a -> "KRW-" + a.currency())
+                .findFirst();
+    }
+
     private void assertLiveAllowed() {
         if (properties.getTrading().getMode() != UpbitProperties.TradingMode.LIVE) {
             throw new IllegalStateException("LIVE 모드가 아닙니다. 실거래를 원하면 upbit.trading.mode=LIVE 로 설정하세요.");

@@ -21,10 +21,26 @@ import lombok.RequiredArgsConstructor;
 public class UpbitQuotationClient {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
+    /** 시세 API는 초당 10회 제한 — 호출 간 최소 간격을 둬서 초과(429)를 예방한다 */
+    private static final long MIN_REQUEST_GAP_MS = 150;
 
     private final WebClient upbitWebClient;
+    private long lastRequestAt = 0;
+
+    private synchronized void throttle() {
+        long wait = lastRequestAt + MIN_REQUEST_GAP_MS - System.currentTimeMillis();
+        if (wait > 0) {
+            try {
+                Thread.sleep(wait);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        lastRequestAt = System.currentTimeMillis();
+    }
 
     public TickerDto getTicker(String market) {
+        throttle();
         List<TickerDto> tickers = upbitWebClient.get()
                 .uri(uri -> uri.path("/v1/ticker").queryParam("markets", market).build())
                 .retrieve()
@@ -38,6 +54,7 @@ public class UpbitQuotationClient {
 
     /** 복수 종목 현재가 일괄 조회 (1회 호출) */
     public List<TickerDto> getTickers(List<String> markets) {
+        throttle();
         String joined = String.join(",", markets);
         List<TickerDto> tickers = upbitWebClient.get()
                 .uri(uri -> uri.path("/v1/ticker").queryParam("markets", joined).build())
@@ -49,6 +66,7 @@ public class UpbitQuotationClient {
 
     /** 거래 가능한 전체 마켓 목록 */
     public List<MarketDto> getMarkets() {
+        throttle();
         List<MarketDto> markets = upbitWebClient.get()
                 .uri("/v1/market/all")
                 .retrieve()
@@ -59,6 +77,7 @@ public class UpbitQuotationClient {
 
     /** 일봉 조회. 최신 캔들이 리스트의 첫 번째로 온다. count 최대 200. */
     public List<CandleDto> getDayCandles(String market, int count) {
+        throttle();
         return upbitWebClient.get()
                 .uri(uri -> uri.path("/v1/candles/days")
                         .queryParam("market", market)
@@ -71,6 +90,7 @@ public class UpbitQuotationClient {
 
     /** 분봉 조회. unit: 1, 3, 5, 15, 30, 60, 240 */
     public List<CandleDto> getMinuteCandles(String market, int unit, int count) {
+        throttle();
         return upbitWebClient.get()
                 .uri(uri -> uri.path("/v1/candles/minutes/" + unit)
                         .queryParam("market", market)

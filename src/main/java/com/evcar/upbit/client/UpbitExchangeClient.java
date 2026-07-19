@@ -11,14 +11,17 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import com.evcar.upbit.config.UpbitProperties;
 import com.evcar.upbit.dto.AccountDto;
 import com.evcar.upbit.dto.OrderResponseDto;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 업비트 거래(Exchange) API 클라이언트. API 키(JWT 인증)가 필요하다.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class UpbitExchangeClient {
@@ -27,6 +30,7 @@ public class UpbitExchangeClient {
 
     private final WebClient upbitWebClient;
     private final UpbitAuthTokenFactory tokenFactory;
+    private final UpbitProperties properties;
 
     /** 전체 계좌(잔고) 조회 */
     public List<AccountDto> getAccounts() {
@@ -62,8 +66,16 @@ public class UpbitExchangeClient {
         return placeOrder(params);
     }
 
+    /**
+     * 주문 실행. 주문은 실패 시 절대 자동 재시도하지 않는다 (중복 주문 위험).
+     * SMP(자전거래 방지) 타입이 설정돼 있으면 주문에 포함한다.
+     */
     private OrderResponseDto placeOrder(Map<String, String> params) {
-        return upbitWebClient.post()
+        String smpType = properties.getTrading().getSmpType();
+        if (smpType != null && !smpType.isBlank()) {
+            params.put("smp_type", smpType);
+        }
+        OrderResponseDto response = upbitWebClient.post()
                 .uri("/v1/orders")
                 .header(HttpHeaders.AUTHORIZATION, tokenFactory.createToken(params))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -71,5 +83,10 @@ public class UpbitExchangeClient {
                 .retrieve()
                 .bodyToMono(OrderResponseDto.class)
                 .block(TIMEOUT);
+        if (response != null) {
+            log.info("[Upbit] 주문 응답 uuid={} state={} market={} side={}",
+                    response.uuid(), response.state(), response.market(), response.side());
+        }
+        return response;
     }
 }

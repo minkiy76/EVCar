@@ -75,10 +75,27 @@ public class TradingEngine {
 
     public synchronized void start() {
         strategy = buildStrategy(properties.getTrading().getStrategy());
+        recoverLivePosition();
         running = true;
         String selection = properties.getTrading().isAutoSelect() ? "종목 자동 선택" : properties.getTrading().getMarket();
         lastMessage = "엔진 시작 (" + broker().modeName() + " 모드, " + strategy.name() + ", " + selection + ")";
         log.info("[Trading] {}", lastMessage);
+    }
+
+    /** LIVE 모드 재시작 시 계좌에 남아 있는 보유 코인을 다시 관리 대상으로 복구 */
+    private void recoverLivePosition() {
+        if (properties.getTrading().getMode() != TradingMode.LIVE || activeMarket != null) {
+            return;
+        }
+        try {
+            liveBroker.findHeldMarket().ifPresent(market -> {
+                activeMarket = market;
+                entryDate = LocalDate.now(KST);
+                log.info("[Trading] 기존 보유 포지션 복구: {}", market);
+            });
+        } catch (Exception e) {
+            log.warn("[Trading] 보유 포지션 복구 실패: {}", e.getMessage());
+        }
     }
 
     public synchronized void stop() {

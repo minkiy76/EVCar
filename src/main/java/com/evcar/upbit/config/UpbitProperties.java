@@ -51,6 +51,12 @@ public class UpbitProperties {
         private int maShortPeriod = 5;
         private int maLongPeriod = 20;
 
+        /**
+         * 자전거래 방지(SMP) 옵션: cancel_taker | cancel_maker | reduce. 빈 값이면 미적용.
+         * 이 봇은 시장가 단일 포지션이라 봇 주문끼리는 자전거래가 나지 않지만,
+         * 같은 계정으로 수동 지정가 주문을 병행한다면 cancel_taker 설정을 권장.
+         */
+        private String smpType = "";
         /** true면 차트 분석 스캔으로 종목을 자동 선택, false면 market 고정 */
         private boolean autoSelect = true;
         private Scanner scanner = new Scanner();
