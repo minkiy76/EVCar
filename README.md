@@ -28,8 +28,11 @@ Hi-media AI coding Team Project / Team Name : FLiP
 `com.evcar.upbit` 패키지에 업비트 가상화폐 자동매매 기능이 추가되었다.
 
 ### 구성
-- **시세 조회**: 업비트 공개 Quotation API (현재가/일봉/분봉, 인증 불필요)
+- **시세 조회**: 업비트 공개 Quotation API (현재가/일봉/분봉, 마켓 목록, 인증 불필요)
 - **전략**: 변동성 돌파(래리 윌리엄스), 이동평균 교차 — `TradingStrategy` 인터페이스로 확장 가능
+- **종목 자동 선택** (`auto-select=true`, 기본): 후보 종목 차트를 스캔해 추세(MA20 상승)·RSI(과열 제외)
+  필터를 통과하고 매수 신호가 뜬 종목을 자동 매수. 후보군은 메이저 코인 10종이 기본이며
+  `upbit.trading.scanner.markets`를 비우면 거래대금 상위 종목을 자동 선정
 - **모의투자(PAPER)**: 가상 잔고로 실시간 자동매매 시뮬레이션 (기본 모드, 수수료 0.05% 반영)
 - **실거래(LIVE)**: JWT 인증 기반 시장가 주문 (`UPBIT_ACCESS_KEY`/`UPBIT_SECRET_KEY` 환경변수 필요)
 - **백테스트**: 과거 일봉으로 전략 수익률/승률/최대낙폭 검증

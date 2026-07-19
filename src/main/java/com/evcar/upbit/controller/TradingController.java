@@ -18,6 +18,8 @@ import com.evcar.upbit.config.UpbitProperties;
 import com.evcar.upbit.config.UpbitProperties.StrategyType;
 import com.evcar.upbit.dto.TickerDto;
 import com.evcar.upbit.engine.TradingEngine;
+import com.evcar.upbit.scanner.MarketScanResult;
+import com.evcar.upbit.scanner.MarketScanner;
 
 import lombok.RequiredArgsConstructor;
 
@@ -27,6 +29,7 @@ public class TradingController {
 
     private final TradingEngine engine;
     private final Backtester backtester;
+    private final MarketScanner scanner;
     private final UpbitQuotationClient quotationClient;
     private final UpbitProperties properties;
 
@@ -59,6 +62,13 @@ public class TradingController {
     @ResponseBody
     public List<TradeRecord> trades() {
         return engine.broker().tradeHistory();
+    }
+
+    /** 후보 종목 차트 분석 결과 (매수 후보 우선 정렬) */
+    @GetMapping("/api/trading/scan")
+    @ResponseBody
+    public List<MarketScanResult> scan() {
+        return scanner.scan(engine.currentStrategy());
     }
 
     @GetMapping("/api/trading/ticker")

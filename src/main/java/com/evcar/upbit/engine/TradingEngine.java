@@ -5,6 +5,7 @@ import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,8 @@ import com.evcar.upbit.config.UpbitProperties.StrategyType;
 import com.evcar.upbit.config.UpbitProperties.TradingMode;
 import com.evcar.upbit.dto.CandleDto;
 import com.evcar.upbit.dto.TickerDto;
+import com.evcar.upbit.scanner.MarketScanResult;
+import com.evcar.upbit.scanner.MarketScanner;
 import com.evcar.upbit.strategy.MovingAverageCrossStrategy;
 import com.evcar.upbit.strategy.TradeSignal;
 import com.evcar.upbit.strategy.TradingStrategy;
@@ -30,6 +33,11 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * 자동매매 엔진. 주기적으로 시세를 확인해 전략 신호에 따라 매매한다.
+ *
+ * 종목 선택:
+ * - auto-select=true(기본): 후보 종목 차트를 스캔해 필터(상승 추세, RSI 비과열)를
+ *   통과하고 매수 신호가 뜬 종목을 자동 선택. 보유 중에는 그 종목만 관리한다.
+ * - auto-select=false: 설정된 market 한 종목만 매매.
  *
  * 리스크 관리 (전략과 무관하게 항상 적용):
  * - 손절: 평균 매수가 대비 stop-loss-pct 하락 시 전량 매도
@@ -46,12 +54,14 @@ public class TradingEngine {
 
     private final UpbitProperties properties;
     private final UpbitQuotationClient quotationClient;
+    private final MarketScanner scanner;
     private final PaperBroker paperBroker;
     private final LiveBroker liveBroker;
 
     private volatile boolean running = false;
     private volatile String lastMessage = "대기 중";
     private volatile String lastCheckedAt = "-";
+    private volatile String activeMarket;   // 현재 보유(관리) 중인 종목
     private TradingStrategy strategy;
     private LocalDate entryDate;
 
@@ -66,7 +76,8 @@ public class TradingEngine {
     public synchronized void start() {
         strategy = buildStrategy(properties.getTrading().getStrategy());
         running = true;
-        lastMessage = "엔진 시작 (" + broker().modeName() + " 모드, " + strategy.name() + ")";
+        String selection = properties.getTrading().isAutoSelect() ? "종목 자동 선택" : properties.getTrading().getMarket();
+        lastMessage = "엔진 시작 (" + broker().modeName() + " 모드, " + strategy.name() + ", " + selection + ")";
         log.info("[Trading] {}", lastMessage);
     }
 
@@ -81,7 +92,6 @@ public class TradingEngine {
         if (!running) {
             return;
         }
-        String market = properties.getTrading().getMarket();
         try {
             lastCheckedAt = java.time.LocalDateTime.now(KST).toString();
 
@@ -93,46 +103,75 @@ public class TradingEngine {
                 return;
             }
 
-            TickerDto ticker = quotationClient.getTicker(market);
-            List<CandleDto> dayCandles = quotationClient.getDayCandles(market, 30);
-            double price = ticker.tradePrice();
             Broker broker = broker();
-            boolean holding = broker.coinVolume(market) > 0;
-
-            // 1) 리스크 관리 우선
-            if (holding && applyRiskExit(broker, market, price)) {
-                return;
-            }
-
-            // 2) 변동성 돌파: 날짜가 바뀌면 보유분 정리 (당일 청산 전략)
-            if (holding && strategy instanceof VolatilityBreakoutStrategy
-                    && entryDate != null && !LocalDate.now(KST).equals(entryDate)) {
-                broker.sellAll(market, price, "일 변경 청산 (변동성 돌파)");
-                entryDate = null;
-                lastMessage = "일 변경 청산 매도 @" + price;
-                return;
-            }
-
-            // 3) 전략 신호
-            TradeSignal signal = strategy.decide(dayCandles, price, holding);
-            switch (signal) {
-                case BUY -> {
-                    broker.buy(market, properties.getTrading().getOrderKrw(), price, strategy.name() + " 매수 신호");
-                    entryDate = LocalDate.now(KST);
-                    lastMessage = "매수 체결 @" + price;
-                }
-                case SELL -> {
-                    broker.sellAll(market, price, strategy.name() + " 매도 신호");
-                    entryDate = null;
-                    lastMessage = "매도 체결 @" + price;
-                }
-                case HOLD -> lastMessage = holding
-                        ? "보유 유지 (현재가 " + price + ")"
-                        : "매수 신호 대기 (현재가 " + price + ")";
+            String held = activeMarket != null && broker.coinVolume(activeMarket) > 0 ? activeMarket : null;
+            if (held != null) {
+                managePosition(broker, held);
+            } else {
+                activeMarket = null;
+                enterPosition(broker);
             }
         } catch (Exception e) {
             lastMessage = "오류: " + e.getMessage();
             log.error("[Trading] tick 실패", e);
+        }
+    }
+
+    /** 보유 종목 관리: 손절/익절 -> 일 변경 청산 -> 전략 매도 신호 */
+    private void managePosition(Broker broker, String market) {
+        TickerDto ticker = quotationClient.getTicker(market);
+        double price = ticker.tradePrice();
+
+        if (applyRiskExit(broker, market, price)) {
+            return;
+        }
+        if (strategy instanceof VolatilityBreakoutStrategy
+                && entryDate != null && !LocalDate.now(KST).equals(entryDate)) {
+            broker.sellAll(market, price, "일 변경 청산 (변동성 돌파)");
+            clearPosition();
+            lastMessage = market + " 일 변경 청산 매도 @" + price;
+            return;
+        }
+        List<CandleDto> dayCandles = quotationClient.getDayCandles(market, 30);
+        TradeSignal signal = strategy.decide(dayCandles, price, true);
+        if (signal == TradeSignal.SELL) {
+            broker.sellAll(market, price, strategy.name() + " 매도 신호");
+            clearPosition();
+            lastMessage = market + " 매도 체결 @" + price;
+        } else {
+            lastMessage = market + " 보유 유지 (현재가 " + price + ")";
+        }
+    }
+
+    /** 신규 진입: 자동 선택이면 스캔, 아니면 고정 종목 신호 확인 */
+    private void enterPosition(Broker broker) {
+        if (properties.getTrading().isAutoSelect()) {
+            Optional<MarketScanResult> pick = scanner.findBuyCandidate(strategy);
+            if (pick.isPresent()) {
+                MarketScanResult r = pick.get();
+                broker.buy(r.market(), properties.getTrading().getOrderKrw(), r.price(),
+                        strategy.name() + " 매수 신호 (자동 선택: " + r.koreanName() + ")");
+                activeMarket = r.market();
+                entryDate = LocalDate.now(KST);
+                lastMessage = r.market() + "(" + r.koreanName() + ") 자동 선택 매수 @" + r.price();
+            } else {
+                lastMessage = "매수 후보 없음 (후보군 스캔 완료, 신호 대기)";
+            }
+            return;
+        }
+
+        String market = properties.getTrading().getMarket();
+        TickerDto ticker = quotationClient.getTicker(market);
+        double price = ticker.tradePrice();
+        List<CandleDto> dayCandles = quotationClient.getDayCandles(market, 30);
+        TradeSignal signal = strategy.decide(dayCandles, price, false);
+        if (signal == TradeSignal.BUY) {
+            broker.buy(market, properties.getTrading().getOrderKrw(), price, strategy.name() + " 매수 신호");
+            activeMarket = market;
+            entryDate = LocalDate.now(KST);
+            lastMessage = market + " 매수 체결 @" + price;
+        } else {
+            lastMessage = market + " 매수 신호 대기 (현재가 " + price + ")";
         }
     }
 
@@ -145,17 +184,22 @@ public class TradingEngine {
         double changePct = (price - avgBuy) / avgBuy * 100.0;
         if (changePct <= -properties.getTrading().getStopLossPct()) {
             broker.sellAll(market, price, String.format("손절 (%.2f%%)", changePct));
-            entryDate = null;
-            lastMessage = "손절 매도 @" + price;
+            clearPosition();
+            lastMessage = market + " 손절 매도 @" + price;
             return true;
         }
         if (changePct >= properties.getTrading().getTakeProfitPct()) {
             broker.sellAll(market, price, String.format("익절 (+%.2f%%)", changePct));
-            entryDate = null;
-            lastMessage = "익절 매도 @" + price;
+            clearPosition();
+            lastMessage = market + " 익절 매도 @" + price;
             return true;
         }
         return false;
+    }
+
+    private void clearPosition() {
+        activeMarket = null;
+        entryDate = null;
     }
 
     /** 당일(KST) 실현 손실 합계 (손실만 양수로 집계) */
@@ -173,6 +217,10 @@ public class TradingEngine {
         return properties.getTrading().getMode() == TradingMode.LIVE ? liveBroker : paperBroker;
     }
 
+    public TradingStrategy currentStrategy() {
+        return strategy;
+    }
+
     private TradingStrategy buildStrategy(StrategyType type) {
         UpbitProperties.Trading t = properties.getTrading();
         return switch (type) {
@@ -182,19 +230,24 @@ public class TradingEngine {
     }
 
     public Map<String, Object> status() {
-        String market = properties.getTrading().getMarket();
+        boolean autoSelect = properties.getTrading().isAutoSelect();
+        String held = activeMarket;
+        String market = held != null ? held
+                : autoSelect ? "자동 선택" : properties.getTrading().getMarket();
         Broker broker = broker();
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("running", running);
         status.put("mode", broker.modeName());
+        status.put("autoSelect", autoSelect);
         status.put("market", market);
+        status.put("activeMarket", held);
         status.put("strategy", strategy.name());
         status.put("lastMessage", lastMessage);
         status.put("lastCheckedAt", lastCheckedAt);
         try {
             status.put("krwBalance", Math.round(broker.krwBalance()));
-            status.put("coinVolume", broker.coinVolume(market));
-            status.put("avgBuyPrice", broker.avgBuyPrice(market));
+            status.put("coinVolume", held != null ? broker.coinVolume(held) : 0);
+            status.put("avgBuyPrice", held != null ? broker.avgBuyPrice(held) : 0);
         } catch (Exception e) {
             status.put("balanceError", e.getMessage());
         }

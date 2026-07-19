@@ -50,6 +50,28 @@ public class UpbitProperties {
         /** 이동평균 교차: 단기/장기 기간 */
         private int maShortPeriod = 5;
         private int maLongPeriod = 20;
+
+        /** true면 차트 분석 스캔으로 종목을 자동 선택, false면 market 고정 */
+        private boolean autoSelect = true;
+        private Scanner scanner = new Scanner();
+    }
+
+    @Getter
+    @Setter
+    public static class Scanner {
+        /**
+         * 스캔 후보 종목. 비워두면 KRW 마켓 전체에서 24시간 거래대금 상위 pool-size개를 자동 선정.
+         * 기본값은 급등락 위험이 상대적으로 낮은 메이저 코인.
+         */
+        private java.util.List<String> markets = java.util.List.of(
+                "KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-ADA",
+                "KRW-DOGE", "KRW-AVAX", "KRW-LINK", "KRW-DOT", "KRW-TRX");
+        /** 동적 선정 시 후보 수 */
+        private int poolSize = 10;
+        /** RSI가 이 값 이상이면 과열로 보고 매수 제외 */
+        private double rsiMax = 70;
+        /** 추세 필터 이동평균 기간 (현재가가 이 MA 위에 있어야 매수) */
+        private int trendMaPeriod = 20;
     }
 
     public enum TradingMode { PAPER, LIVE }

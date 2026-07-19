@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.evcar.upbit.dto.CandleDto;
+import com.evcar.upbit.dto.MarketDto;
 import com.evcar.upbit.dto.TickerDto;
 
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,27 @@ public class UpbitQuotationClient {
             throw new IllegalStateException("업비트 현재가 조회 실패: " + market);
         }
         return tickers.get(0);
+    }
+
+    /** 복수 종목 현재가 일괄 조회 (1회 호출) */
+    public List<TickerDto> getTickers(List<String> markets) {
+        String joined = String.join(",", markets);
+        List<TickerDto> tickers = upbitWebClient.get()
+                .uri(uri -> uri.path("/v1/ticker").queryParam("markets", joined).build())
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<List<TickerDto>>() {})
+                .block(TIMEOUT);
+        return tickers != null ? tickers : List.of();
+    }
+
+    /** 거래 가능한 전체 마켓 목록 */
+    public List<MarketDto> getMarkets() {
+        List<MarketDto> markets = upbitWebClient.get()
+                .uri("/v1/market/all")
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<List<MarketDto>>() {})
+                .block(TIMEOUT);
+        return markets != null ? markets : List.of();
     }
 
     /** 일봉 조회. 최신 캔들이 리스트의 첫 번째로 온다. count 최대 200. */

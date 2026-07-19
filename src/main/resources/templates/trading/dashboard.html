@@ -128,6 +128,20 @@
     </div>
 
     <div class="card">
+        <h2>종목 스캔 (차트 분석)</h2>
+        <div class="controls" style="margin-bottom: 12px;">
+            <button class="primary" id="btn-scan">스캔 실행</button>
+            <span class="sub" style="margin: 0;">후보 종목별로 추세(MA20)·RSI(14)·변동성 돌파 목표가를 분석합니다. 자동 선택 모드에서 엔진이 이 결과로 매수 종목을 고릅니다.</span>
+        </div>
+        <div class="table-scroll">
+            <table id="scan-table">
+                <thead><tr><th>종목</th><th>현재가</th><th>24h 거래대금</th><th>MA20</th><th>추세</th><th>RSI</th><th>돌파 목표가</th><th>판정</th></tr></thead>
+                <tbody><tr><td colspan="8" style="text-align:center; color: var(--text-muted);">스캔을 실행하면 결과가 표시됩니다</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>백테스트</h2>
         <div class="controls" style="margin-bottom: 12px;">
             <select id="bt-strategy">
@@ -184,7 +198,7 @@
         } else {
             state.innerHTML = '<span style="color: var(--text-muted);">■</span> 정지';
         }
-        $('tile-mode').textContent = s.mode + ' · ' + s.market;
+        $('tile-mode').textContent = s.mode + ' · ' + (s.autoSelect && !s.activeMarket ? '종목 자동 선택' : s.market);
         $('tile-krw').textContent = s.krwBalance != null ? fmt.format(s.krwBalance) + '원' : '조회 불가';
         const p = s.realizedProfitKrw ?? 0;
         const profitEl = $('tile-profit');
@@ -214,6 +228,33 @@
                     <td style="text-align:left;">${t.reason}</td>
                 </tr>`).join('');
         } catch (e) { console.error(e); }
+    }
+
+    async function runScan() {
+        const btn = $('btn-scan');
+        const tbody = $('scan-table').querySelector('tbody');
+        btn.disabled = true;
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--text-muted);">스캔 중...</td></tr>';
+        try {
+            const rows = await api('/api/trading/scan');
+            tbody.innerHTML = rows.map(r => `
+                <tr>
+                    <td>${r.koreanName} <span style="color: var(--text-muted);">${r.market}</span></td>
+                    <td>${fmt.format(r.price)}</td>
+                    <td>${(r.tradeValue24h / 1e8).toFixed(0)}억</td>
+                    <td>${fmt.format(Math.round(r.trendMa))}</td>
+                    <td>${r.trendUp ? '<span class="delta-up">▲ 상승</span>' : '<span class="delta-down">▼ 하락</span>'}</td>
+                    <td>${r.rsi14}</td>
+                    <td>${fmt.format(Math.round(r.breakoutTarget))}</td>
+                    <td style="text-align:left;">${r.signal === 'BUY'
+                        ? '<strong class="delta-up">● 매수 후보</strong>'
+                        : '<span style="color: var(--text-muted);">' + r.note + '</span>'}</td>
+                </tr>`).join('');
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;" class="delta-down">스캔 실패: ${e.message}</td></tr>`;
+        } finally {
+            btn.disabled = false;
+        }
     }
 
     // ---- 자산 곡선 차트 (단일 시리즈 라인 + 크로스헤어 툴팁) ----
@@ -313,6 +354,7 @@
     $('btn-start').onclick = async () => renderStatus(await api('/api/trading/start', { method: 'POST' }));
     $('btn-stop').onclick = async () => renderStatus(await api('/api/trading/stop', { method: 'POST' }));
     $('btn-backtest').onclick = runBacktest;
+    $('btn-scan').onclick = runScan;
     $('btn-table-toggle').onclick = () => {
         const wrap = $('bt-table-wrap');
         wrap.classList.toggle('hidden');
