@@ -1,0 +1,29 @@
+# 업비트 모의투자 봇 systemd 서비스 (서버 재부팅에도 자동 재시작)
+#
+# 설치:
+#   sudo cp deploy/evcar-trading.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now evcar-trading
+# 로그 확인:
+#   journalctl -u evcar-trading -f
+#
+# WorkingDirectory와 jar 경로는 실제 배포 위치에 맞게 수정할 것.
+
+[Unit]
+Description=EVCar Upbit paper-trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/evcar
+ExecStart=/usr/bin/java -jar /opt/evcar/EVCar-0.0.1-SNAPSHOT.jar \
+    --upbit.trading.mode=PAPER \
+    --upbit.trading.auto-start=true
+Restart=on-failure
+RestartSec=10
+# LIVE 모드 전환 시에만 필요 (모의투자에서는 불필요):
+# Environment=UPBIT_ACCESS_KEY=발급받은키
+# Environment=UPBIT_SECRET_KEY=발급받은키
+
+[Install]
+WantedBy=multi-user.target

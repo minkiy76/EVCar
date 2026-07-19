@@ -43,6 +43,16 @@ Hi-media AI coding Team Project / Team Name : FLiP
 - 1회 주문 상한(`max-order-krw`), 손절/익절(`stop-loss-pct`/`take-profit-pct`), 일일 손실 한도 초과 시 엔진 자동 정지
 - 변동성 돌파 전략은 날짜(KST) 변경 시 보유분 자동 청산
 
+### 서버 배포 (모의투자 실행)
+JDK 21 필요. 저장소를 받은 뒤:
+```bash
+git checkout claude/upbit-crypto-exchange-5wyflw
+nohup ./deploy/run-paper.sh > trading.log 2>&1 &   # 빌드 + PAPER 모드 자동 시작
+```
+- 대시보드: `http://서버IP:8080/trading` (외부 접속 시 방화벽/보안그룹에서 8080 오픈 필요)
+- 상시 운영은 `deploy/evcar-trading.service` (systemd) 사용 — 재부팅·크래시 시 자동 재시작
+- 모의투자 잔고·체결 내역은 메모리에만 저장되므로 앱을 재시작하면 초기화된다
+
 ### 실거래(LIVE) 운영 주의사항 — 업비트 API 정책
 - **API 키 권한**: 자산 조회 + 주문 조회 + 주문하기만 부여. **출금 권한은 절대 부여 금지**
 - **고정 IP**: 거래 API는 키 발급 시 등록한 공인 IP에서만 동작 (키당 최대 10개). 서버 IP가 바뀌면 주문 중단
